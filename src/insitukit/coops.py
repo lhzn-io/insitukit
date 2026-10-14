@@ -25,7 +25,7 @@ import requests
 
 BASE_URL = "https://api.tidesandcurrents.noaa.gov/api/prod/datagetter"
 META_URL = "https://api.tidesandcurrents.noaa.gov/mdapi/prod/webapi/stations/{station}.json"
-USER_AGENT = "lhzn-blue-ingest/0.1 (+https://longhorizon.blue)"
+USER_AGENT = "lhzn-blue-ingest/0.2 (+https://longhorizon.blue; hello@longhorizon.blue)"
 APPLICATION = "lhzn-blue"
 SIX_MINUTE_SPAN = timedelta(days=30)
 # Value fields per product, renamed to the column names returned by fetch().
