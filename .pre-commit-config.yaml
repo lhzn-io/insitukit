@@ -1,0 +1,17 @@
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-added-large-files
+      - id: check-toml
+      - id: detect-private-key
+
+  # Pinned deliberately, as in forcingkit: CI runs these same hooks, and the rule selection is pinned alongside in
+  # pyproject.toml [tool.ruff.lint]. Linting only: no formatter, so the modules keep the layout they came with.
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.16.9
+    hooks:
+      - id: ruff-check

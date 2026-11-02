@@ -1,0 +1,51 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "insitukit"
+version = "0.1.0"
+description = "Fetch, summarise and publish in situ ocean observations: NOAA CO-OPS and ERDDAP clients, record statistics, and a compact JSON time-series format."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { file = "LICENSE" }
+authors = [{ name = "Long Horizon Observatory", email = "dfry@lhzn.io" }]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Science/Research",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Topic :: Scientific/Engineering :: Hydrology",
+  "Topic :: Scientific/Engineering :: Information Analysis",
+]
+dependencies = [
+  "numpy>=1.26",
+  "pandas>=2.2",
+  "requests>=2.32",
+]
+
+[project.optional-dependencies]
+# Store.root of gs://bucket/prefix. Cloudflare Workers KV (kv://) needs only requests.
+gcs = ["google-cloud-storage>=2.18"]
+
+[project.urls]
+Issues = "https://github.com/lhzn-io/insitukit/issues"
+Source = "https://github.com/lhzn-io/insitukit"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/insitukit"]
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+# The rule set forcingkit pins (pyflakes and the syntax-level pycodestyle rules), chosen explicitly so a ruff
+# upgrade cannot silently change what "clean" means.
+select = ["E4", "E7", "E9", "F"]
+
+[dependency-groups]
+dev = [
+  "pre-commit>=4.5.1",
+  "pytest>=8",
+  "ruff>=0.16.9",
+]

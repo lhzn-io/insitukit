@@ -1,9 +1,9 @@
-"""A small ERDDAP tabledap client for servers other than the Sound's LISICOS (Merlin), first NERACOOS.
+"""A small ERDDAP tabledap client.
 
-The request rules follow merlin.py, which stays as it is for the Sound: requests run one at a time, at least
-``min_interval`` apart, each attempt counts against a per-run budget, a 503 or 429 with Retry-After is waited out,
-and a 404 whose body says "no matching results" is an empty window, not a missing dataset. The state lives on the
-instance, so a second server never shares the Sound's budget or its unreachable flag.
+Requests run one at a time, at least ``min_interval`` apart; each attempt counts against a per-run budget; a 503 or
+429 with Retry-After is waited out; and a 404 whose body says "no matching results" is an empty window, not a missing
+dataset. After a run of failed connections the server is marked unreachable and later requests fail at once. The
+state lives on the instance, so two servers never share a budget or an unreachable flag.
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 import pandas as pd
 import requests
 
-from .merlin import USER_AGENT
+from . import coops
 
 log = logging.getLogger(__name__)
 
@@ -32,7 +32,10 @@ class BudgetExceeded(RuntimeError):
 
 
 class Erddap:
-    def __init__(self, base_url: str, budget: int = 60, min_interval: float = 1.0, connect_timeout: int = 10):
+    """One ERDDAP server. ``user_agent`` defaults to the one set with ``insitukit.identify``."""
+
+    def __init__(self, base_url: str, budget: int = 60, min_interval: float = 1.0, connect_timeout: int = 10,
+                 user_agent: str | None = None):
         self.base_url = base_url.rstrip("/")
         self.budget = budget
         self.min_interval = min_interval
@@ -42,7 +45,7 @@ class Erddap:
         self.unreachable: str | None = None
         self._last_start = 0.0
         self._session = requests.Session()
-        self._session.headers["User-Agent"] = USER_AGENT
+        self._session.headers["User-Agent"] = user_agent or coops.USER_AGENT
 
     def summary(self) -> str:
         return f"{self.base_url}: {self.requests} requests of a budget of {self.budget}, {self.bytes / 1e6:.1f} MB"
@@ -90,9 +93,7 @@ class Erddap:
 
     def fetch(self, dataset_id: str, start: datetime, end: datetime, columns: list[str]) -> pd.DataFrame:
         """Rows for ``start <= time < end``: a UTC ``time`` column and the requested columns (floats where numeric).
-
-        Unlike merlin.fetch, no ``depth`` column is asked for: many NERACOOS datasets have none.
-        """
+        Only the named columns are asked for (no ``depth`` unless listed: many datasets have none)."""
         stamp = lambda ts: ts.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")  # noqa: E731
         query = ",".join(["time", *columns])
         url = f"{self.base_url}/tabledap/{dataset_id}.csv?{query}&time%3E={stamp(start)}&time%3C{stamp(end)}"

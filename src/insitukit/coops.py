@@ -1,7 +1,6 @@
 """Fetch observations and tide predictions from the NOAA CO-OPS data API (Tides and Currents).
 
-Every request asks for metric units and GMT; conversion to the units we publish happens in the
-builders. The API answers HTTP 200 with an ``{"error": ...}`` body for a bad request, and "No data
+Every request asks for metric units and GMT; converting to other units is the caller's. The API answers HTTP 200 with an ``{"error": ...}`` body for a bad request, and "No data
 was found" when a station lacks the sensor or the window falls in a gap: that is an empty result,
 not a failure. Server errors and timeouts retry with backoff.
 
@@ -11,6 +10,8 @@ Per-request range limits (checked against the live API, 2026-10):
   ``water_level``): 31 days. We ask for 30-day spans.
 - the same products with ``interval=h`` (the reading at the top of each hour), and ``hourly_height``:
   365 days, compared by calendar date, so one calendar year (including a leap year) fits one request.
+
+Requests carry ``USER_AGENT`` and ``APPLICATION``; set your own with ``insitukit.identify``.
 """
 
 from __future__ import annotations
@@ -23,10 +24,12 @@ import numpy as np
 import pandas as pd
 import requests
 
+from . import __version__
+
 BASE_URL = "https://api.tidesandcurrents.noaa.gov/api/prod/datagetter"
 META_URL = "https://api.tidesandcurrents.noaa.gov/mdapi/prod/webapi/stations/{station}.json"
-USER_AGENT = "lhzn-blue-ingest/0.2 (+https://longhorizon.blue; hello@longhorizon.blue)"
-APPLICATION = "lhzn-blue"
+USER_AGENT = f"insitukit/{__version__} (+https://github.com/lhzn-io/insitukit)"
+APPLICATION = "insitukit"
 SIX_MINUTE_SPAN = timedelta(days=30)
 # Value fields per product, renamed to the column names returned by fetch().
 FIELDS = {
@@ -167,6 +170,22 @@ def tide_events(station: str, start: datetime, end: datetime, datum: str = "MLLW
         except (KeyError, TypeError, ValueError):
             continue
     return out
+
+
+def predictions(station: str, start: datetime, end: datetime, datum: str = "MLLW") -> pd.Series:
+    """6-minute tide predictions (m above ``datum``) in ``[start, end)``, indexed by UTC time. A station's own
+    predictions taken from its observed water level give the surge without the phase shift of a nearby station's."""
+    vals: dict[pd.Timestamp, float] = {}
+    for lo, hi in spans(start, end, hourly=False):
+        body = _get({"product": "predictions", "station": station, "datum": datum, "interval": "6",
+                     "begin_date": _stamp(lo), "end_date": _stamp(hi - timedelta(minutes=1))}) or {}
+        for row in body.get("predictions") or []:
+            try:
+                vals[pd.Timestamp(row["t"], tz="UTC")] = float(row["v"])
+            except (KeyError, TypeError, ValueError):
+                continue
+    s = pd.Series(vals, dtype=float).sort_index()
+    return s[(s.index >= pd.Timestamp(start)) & (s.index < pd.Timestamp(end))]
 
 
 def metadata(station: str) -> dict:
