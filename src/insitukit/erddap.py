@@ -2,8 +2,9 @@
 
 Requests run one at a time, at least ``min_interval`` apart; each attempt counts against a per-run budget; a 503 or
 429 with Retry-After is waited out; and a 404 whose body says "no matching results" is an empty window, not a missing
-dataset. After a run of failed connections the server is marked unreachable and later requests fail at once. The
-state lives on the instance, so two servers never share a budget or an unreachable flag.
+dataset; any other 404 raises ``DatasetMissing``. After a run of failed connections the server is marked unreachable
+and later requests fail at once. The state lives on the instance, so two servers never share a budget or an
+unreachable flag. One instance is meant for one thread.
 """
 
 from __future__ import annotations
@@ -31,15 +32,23 @@ class BudgetExceeded(RuntimeError):
     """This run has made as many requests to the server as its budget allows."""
 
 
-class Erddap:
-    """One ERDDAP server. ``user_agent`` defaults to the one set with ``insitukit.identify``."""
+class DatasetMissing(RuntimeError):
+    """The server does not publish the dataset (a 404 that is not an empty window)."""
 
-    def __init__(self, base_url: str, budget: int = 60, min_interval: float = 1.0, connect_timeout: int = 10,
-                 user_agent: str | None = None):
+
+class Erddap:
+    """One ERDDAP server. ``budget`` caps the attempts this instance makes (None: no cap); ``retries`` and ``timeout``
+    (read timeout, seconds) apply to each request unless it names its own. ``user_agent`` defaults to the one set
+    with ``insitukit.identify``."""
+
+    def __init__(self, base_url: str, budget: int | None = 60, min_interval: float = 1.0, connect_timeout: int = 10,
+                 user_agent: str | None = None, retries: int = 3, timeout: int = 90):
         self.base_url = base_url.rstrip("/")
         self.budget = budget
         self.min_interval = min_interval
         self.connect_timeout = connect_timeout
+        self.retries = retries
+        self.timeout = timeout
         self.requests = 0
         self.bytes = 0
         self.unreachable: str | None = None
@@ -48,15 +57,23 @@ class Erddap:
         self._session.headers["User-Agent"] = user_agent or coops.USER_AGENT
 
     def summary(self) -> str:
-        return f"{self.base_url}: {self.requests} requests of a budget of {self.budget}, {self.bytes / 1e6:.1f} MB"
+        budget = "no budget" if self.budget is None else f"a budget of {self.budget}"
+        return f"{self.base_url}: {self.requests} requests of {budget}, {self.bytes / 1e6:.1f} MB"
 
-    def _get(self, url: str, retries: int = 3, timeout: int = 90) -> requests.Response | None:
+    def get(self, url: str, retries: int | None = None, timeout: int | None = None) -> requests.Response | None:
+        """GET any URL on this server (an ``allDatasets`` listing, a ``.csv`` or ``.nc`` query) under the same
+        pacing, budget, retries and unreachable flag as ``fetch``; None for an empty window."""
+        return self._get(url, retries, timeout)
+
+    def _get(self, url: str, retries: int | None = None, timeout: int | None = None) -> requests.Response | None:
+        retries = self.retries if retries is None else retries
+        timeout = self.timeout if timeout is None else timeout
         if self.unreachable:
             raise Unreachable(f"{self.base_url} unreachable since {self.unreachable}; not tried: {url}")
         delay = 5.0
         connect_failures = 0
         for attempt in range(1, retries + 1):
-            if self.requests >= self.budget:
+            if self.budget is not None and self.requests >= self.budget:
                 raise BudgetExceeded(f"{self.requests} requests reached this run's budget; not sent: {url}")
             wait = self._last_start + self.min_interval - time.monotonic()
             if wait > 0:
@@ -77,7 +94,7 @@ class Erddap:
                     return None
                 log.warning("HTTP %d, attempt %d: %s", resp.status_code, attempt, url)
                 if resp.status_code == 404:
-                    raise RuntimeError(f"dataset not found: {url}")
+                    raise DatasetMissing(f"dataset not found: {url}")
                 if resp.status_code in (429, 503):
                     try:
                         delay = max(delay, min(60.0, float(resp.headers.get("Retry-After", ""))))
@@ -90,6 +107,14 @@ class Erddap:
             self.unreachable = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
             raise Unreachable(f"no connection after {retries} attempts: {url}")
         raise RuntimeError(f"giving up after {retries} attempts: {url}")
+
+    def variables(self, dataset_id: str) -> list[str]:
+        """The variable names a dataset publishes, from its ``info`` page."""
+        resp = self._get(f"{self.base_url}/info/{dataset_id}/index.csv")
+        if resp is None:
+            raise DatasetMissing(f"no info for {dataset_id} on {self.base_url}")
+        info = pd.read_csv(io.StringIO(resp.text))
+        return info.loc[info["Row Type"] == "variable", "Variable Name"].tolist()
 
     def fetch(self, dataset_id: str, start: datetime, end: datetime, columns: list[str]) -> pd.DataFrame:
         """Rows for ``start <= time < end``: a UTC ``time`` column and the requested columns (floats where numeric).

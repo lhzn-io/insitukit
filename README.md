@@ -50,15 +50,16 @@ hourly = series.encode(surge.resample("h").mean(), unit="m", places=3)  # {"t0":
 
 | Module | Contents |
 | :--- | :--- |
-| `insitukit.coops` | `fetch` (observations; long windows split to the API's limits), `predictions` (6-minute tides), `tide_events` (highs and lows), `metadata`. Metric units and UTC throughout. |
-| `insitukit.erddap` | `Erddap(base_url, budget, min_interval)`: tabledap CSV into a DataFrame, with a per-run request budget and an unreachable flag. |
+| `insitukit.coops` | `fetch` (observations, including `currents` by bin; long windows split to the API's limits), `predictions` (6-minute or hourly tides), `tide_events` (highs and lows), `current_predictions` (speed along the flood axis, or `MAX_SLACK` events), and station metadata: `metadata`, `datums`, `flood_levels`, `harcon`, `stations`. `DatumUnavailable` when a station lacks the datum asked for. Metric units (current speeds in m/s) and UTC, with English units where the API offers them. |
+| `insitukit.erddap` | `Erddap(base_url, budget, min_interval, retries, timeout)`: tabledap CSV into a DataFrame, `variables` of a dataset, and `get` for any other query, with a per-run request budget (or none), an unreachable flag and `DatasetMissing`. |
 | `insitukit.stats` | `day_means` (coverage rule), `exceedance`, `joint` (two series paired by nearest time), `climatology` (Hobday et al. 2016: 11-day window, 31-day smoothing, mean, SD, 90th percentile). |
 | `insitukit.series` | `encode` and `decode` for one series, `encode_frame` and `decode_frame` for several on one grid, `iso`. |
 | `insitukit.store` | `Store(root, writable, max_bytes)`: JSON and bytes to a directory, `kv://<account>/<namespace>` (Cloudflare Workers KV, token in `CLOUDFLARE_API_TOKEN`) or `gs://bucket/prefix`, refusing names outside `writable` and objects over `max_bytes`. |
 
 ## Etiquette
 
-CO-OPS requests are at least 1 s apart, and 403 and 429 answers are treated as throttling and retried with backoff.
+CO-OPS requests are at least 1 s apart (across threads), and 403 and 429 answers are treated as throttling and
+retried with backoff.
 ERDDAP requests are at least `min_interval` apart and stop at the run's `budget`. Both send the User-Agent given to
 `identify`; include a way for the provider to reach you.
 

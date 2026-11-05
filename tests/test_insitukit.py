@@ -118,3 +118,156 @@ def test_the_erddap_budget_stops_requests():
     server = erddap.Erddap("https://erddap.example.org/erddap", budget=0)
     with pytest.raises(erddap.BudgetExceeded):
         server.fetch("ds", datetime(2026, 1, 1, tzinfo=timezone.utc), datetime(2026, 1, 2, tzinfo=timezone.utc), ["t"])
+
+
+class FakeResponse:
+    def __init__(self, status, body=None, text=""):
+        self.status_code = status
+        self._body = body
+        self.text = text
+        self.content = text.encode()
+        self.headers = {}
+
+    def json(self):
+        if self._body is None:
+            raise ValueError("not JSON")
+        return self._body
+
+
+def _serve(monkeypatch, *responses):
+    """Answer the CO-OPS session's GETs in turn, without pacing or backoff."""
+    sent = []
+    queue = list(responses)
+
+    def get(url, params=None, timeout=None):
+        sent.append((url, dict(params or {})))
+        return queue.pop(0)
+
+    monkeypatch.setattr(coops._session, "get", get)
+    monkeypatch.setattr(coops, "MIN_INTERVAL", 0.0)
+    monkeypatch.setattr(coops.time, "sleep", lambda s: None)
+    return sent
+
+
+DAY = (datetime(2026, 11, 1, tzinfo=timezone.utc), datetime(2026, 11, 2, tzinfo=timezone.utc))
+
+
+def test_a_missing_datum_on_a_400_raises_datum_unavailable(monkeypatch):
+    msg = " The supported Datum values are: MHHW, MHW, MTL, MSL, MLW, MLLW, LWI, HWI"
+    _serve(monkeypatch, FakeResponse(400, {"error": {"message": msg}}))
+    with pytest.raises(coops.DatumUnavailable, match="supported Datum"):
+        coops.fetch("water_level", "8465705", *DAY, datum="NAVD")
+
+
+def test_other_rejections_keep_their_message_and_no_data_is_empty(monkeypatch):
+    bad = {"error": {"message": " The station is not a valid station or there is system error."}}
+    _serve(monkeypatch, FakeResponse(400, bad), FakeResponse(200, {"error": {"message": "No data was found."}}))
+    with pytest.raises(coops.CoopsError, match="not a valid station") as exc:
+        coops.fetch("water_level", "0000000", *DAY)
+    assert not isinstance(exc.value, coops.DatumUnavailable)
+    assert coops.fetch("water_level", "8461490", *DAY).empty
+
+
+def test_throttling_is_retried(monkeypatch):
+    rows = {"data": [{"t": "2026-11-01 00:00", "v": "0.5"}]}
+    sent = _serve(monkeypatch, FakeResponse(403, text="Forbidden"), FakeResponse(200, rows))
+    df = coops.fetch("water_level", "8461490", *DAY)
+    assert len(sent) == 2 and df["water_level"].tolist() == [0.5]
+
+
+def test_currents_come_back_in_metres_per_second_for_the_bin_asked(monkeypatch):
+    rows = {"data": [{"t": "2026-11-01 00:03", "s": "155.7", "d": "96", "b": "1"},
+                     {"t": "2026-11-01 00:09", "s": "", "d": "97", "b": "1"}]}
+    sent = _serve(monkeypatch, FakeResponse(200, rows))
+    df = coops.fetch("currents", "pm0101", *DAY, bin=1)
+    assert sent[0][1]["bin"] == 1 and "datum" not in sent[0][1]
+    assert list(df.columns) == ["time", "speed", "direction", "bin"]
+    assert df["speed"].iloc[0] == pytest.approx(1.557) and pd.isna(df["speed"].iloc[1])
+
+
+def _cp(*rows):
+    return FakeResponse(200, {"current_predictions": {"units": "meters, cm/s", "cp": list(rows)}})
+
+
+CP = {"meanFloodDir": 342, "Bin": "12", "meanEbbDir": 194, "Depth": "2.4"}
+
+
+def test_current_predictions_are_signed_metres_per_second_with_the_axis(monkeypatch):
+    _serve(monkeypatch, _cp({**CP, "Time": "2026-11-01 00:00", "Velocity_Major": -84.2},
+                            {**CP, "Time": "2026-11-01 00:30", "Velocity_Major": 55.3}))
+    df = coops.current_predictions("PIR0701", *DAY)
+    assert df["velocity_major"].tolist() == pytest.approx([-0.842, 0.553])
+    assert df.attrs == {"bin": 12, "depth_m": 2.4, "flood_dir_deg": 342.0, "ebb_dir_deg": 194.0}
+
+
+def test_max_slack_events_carry_their_type_and_subordinates_are_refused_otherwise(monkeypatch):
+    event = {**CP, "Type": "ebb", "Time": "2026-11-01 00:18", "Velocity_Major": -85.7}
+    _serve(monkeypatch, _cp(event), _cp(event))
+    df = coops.current_predictions("PIR0701", *DAY, interval="MAX_SLACK")
+    assert df["type"].tolist() == ["ebb"]
+    with pytest.raises(coops.CoopsError, match="subordinate"):
+        coops.current_predictions("ACT0091", *DAY)
+
+
+def test_station_metadata_helpers(monkeypatch):
+    datums = {"epoch": "1983-2001", "units": "feet", "OrthometricDatum": "NAVD88",
+              "datums": [{"name": "MHHW", "value": 6.57}, {"name": "MLLW", "value": 3.5}, {"name": "X", "value": None}]}
+    floods = {"nos_minor": 8.33, "nws_major": 11.32, "action": None}
+    harcon = {"HarmonicConstituents": [{"binNbr": 1, "constituentName": "M2"}, {"binNbr": 2, "constituentName": "M2"}]}
+    listing = {"stations": [{"id": "A", "lat": 41.3, "lng": -72.1}, {"id": "B", "lat": 43.0, "lng": -70.7}]}
+    sent = _serve(monkeypatch, FakeResponse(200, datums), FakeResponse(200, floods), FakeResponse(200, harcon),
+                  FakeResponse(200, listing))
+    d = coops.datums("8461490", units="english")
+    assert d == {"datums": {"MHHW": 6.57, "MLLW": 3.5}, "epoch": "1983-2001", "units": "feet", "orthometric": "NAVD88"}
+    f = coops.flood_levels("8461490")
+    assert f["nos_minor"] == 8.33 and f["nos_major"] is None and set(f) == set(coops.FLOOD_LEVELS)
+    assert [r["binNbr"] for r in coops.harcon("PIR0701", bin=2)] == [2]
+    assert [s["id"] for s in coops.stations("currentpredictions", bbox=(-73.0, 41.0, -71.0, 42.0))] == ["A"]
+    assert sent[0][0].endswith("/stations/8461490/datums.json") and sent[0][1] == {"units": "english"}
+    assert sent[3][1] == {"type": "currentpredictions", "units": "metric"}
+
+
+def test_hourly_predictions_ask_once_a_year_in_the_units_given(monkeypatch):
+    calls = []
+
+    def fake_get(params):
+        calls.append(params)
+        return {"predictions": [{"t": "2026-11-01 00:00", "v": "1.25"}]}
+
+    monkeypatch.setattr(coops, "_get", fake_get)
+    s = coops.predictions("8461490", datetime(2026, 11, 1, tzinfo=timezone.utc), datetime(2026, 12, 31, tzinfo=timezone.utc),
+                          interval="h", units="english")
+    assert len(calls) == 1 and calls[0]["interval"] == "h" and calls[0]["units"] == "english" and s.iloc[0] == 1.25
+
+
+def test_pacing_is_shared_across_threads(monkeypatch):
+    import threading
+    import time
+
+    monkeypatch.setattr(coops, "MIN_INTERVAL", 0.05)
+    monkeypatch.setattr(coops, "_last_request", 0.0)
+    stamps = []
+
+    def worker():
+        coops._pace()
+        stamps.append(time.monotonic())
+
+    threads = [threading.Thread(target=worker) for _ in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    stamps.sort()
+    assert all(b - a >= 0.045 for a, b in zip(stamps, stamps[1:]))
+
+
+def test_erddap_variables_get_and_a_missing_dataset(monkeypatch):
+    server = erddap.Erddap("https://erddap.example.org/erddap", budget=None, min_interval=0, retries=1)
+    info = "Row Type,Variable Name,Attribute Name\nvariable,time,\nattribute,time,units\nvariable,sea_water_temperature,\n"
+    monkeypatch.setattr(server._session, "get", lambda url, timeout=None: FakeResponse(200, text=info))
+    assert server.variables("WLIS") == ["time", "sea_water_temperature"]
+    assert server.get("https://erddap.example.org/erddap/tabledap/allDatasets.csv").text == info
+    assert "no budget" in server.summary()
+    monkeypatch.setattr(server._session, "get", lambda url, timeout=None: FakeResponse(404, text="Resource not found"))
+    with pytest.raises(erddap.DatasetMissing):
+        server.fetch("nope", *DAY, ["t"])
