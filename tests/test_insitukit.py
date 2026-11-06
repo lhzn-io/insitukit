@@ -280,3 +280,17 @@ def test_a_single_prediction_event_comes_back_unwrapped(monkeypatch):
     df = coops.current_predictions("PIR0701", datetime(2026, 11, 1, tzinfo=timezone.utc),
                                    datetime(2026, 11, 1, 12, tzinfo=timezone.utc), interval="MAX_SLACK")
     assert df["type"].tolist() == ["flood"] and df["velocity_major"].iloc[0] == pytest.approx(0.553)
+
+
+def test_quality_levels_ride_along_when_asked(monkeypatch):
+    rows = {"data": [{"t": "2026-11-01 00:00", "v": "0.5", "s": "0.01", "f": "0,0,0,0", "q": "v"},
+                     {"t": "2026-11-01 00:06", "v": "0.6", "s": "0.01", "f": "0,0,0,0", "q": "p"}]}
+    monkeypatch.setattr(coops, "_get", lambda params: rows)
+    day = (datetime(2026, 11, 1, tzinfo=timezone.utc), datetime(2026, 11, 2, tzinfo=timezone.utc))
+    assert list(coops.fetch("water_level", "8516945", *day).columns) == ["time", "water_level"]
+    df = coops.fetch("water_level", "8516945", *day, quality=True)
+    assert df["quality"].tolist() == ["v", "p"]
+    monkeypatch.setattr(coops, "_get", lambda params: {"data": [{"t": "2026-11-01 00:00", "v": "2.4", "s": "0.01"}]})
+    assert coops.fetch("hourly_height", "8516945", *day, quality=True)["quality"].tolist() == [None]
+    monkeypatch.setattr(coops, "_get", lambda params: None)
+    assert list(coops.fetch("water_level", "8516945", *day, quality=True).columns) == ["time", "water_level", "quality"]

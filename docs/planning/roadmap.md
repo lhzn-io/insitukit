@@ -104,13 +104,16 @@ unit tests pass with the same assertions; only what the tests patch changes.
   readings, now kept, and a source list without repeats.
 - `coops.current_predictions` accepts a window whose single event CO-OPS returns as an object, not a one-item list.
 
+## 0.5.0: quality levels
+
+- `coops.fetch(..., quality=True)` adds a `quality` column: CO-OPS's `p` (preliminary, replaced after review) or `v` (verified) for each reading. A cache should keep verified windows for good and let preliminary ones expire; forcingkit's water-level cache does from 0.17.0 (a day for preliminary).
+
 ## Later
 - `series` parity with lhzn-blue's own encoder, which keeps leading and trailing gaps, always uses an hourly grid,
   converts temperatures to degrees F and skips marker lists. Either `series` gains those options or the consumer
   keeps a thin wrapper.
 - Consumers' own exceedance, joint histogram and climatology code, to be compared with `stats` and folded in.
 - An optional on-disk response cache (several consumers keep their own).
-- Quality flags (`f`, `q`) on water level, for verified against preliminary data.
 - A lookup of the nearest station of a type, so consumers can replace hand-kept station lists with a query.
 
 ## Out of scope

@@ -176,6 +176,7 @@ def fetch(
     interval: str | None = None,
     datum: str = "MLLW",
     bin: int | None = None,
+    quality: bool = False,
 ) -> pd.DataFrame:
     """Observations for ``start <= time < end`` with a UTC ``time`` column and float value columns.
 
@@ -183,6 +184,10 @@ def fetch(
     ``wind_direction`` (degrees true) and ``wind_gust`` (m/s); ``currents`` returns ``speed`` (m/s), ``direction``
     (degrees true, the direction of flow) and ``bin``, for ``bin`` or, when None, the station's default bin.
     Readings the API flags as missing come back as NaN. Long windows are split to respect the range limits.
+
+    With ``quality=True`` a ``quality`` column carries CO-OPS's quality level for each reading: ``"p"`` for
+    preliminary (not yet reviewed, and replaced when it is) or ``"v"`` for verified. Products that publish no
+    quality level (``hourly_height`` is verified only; meteorological products carry none) give None.
     """
     fields = FIELDS.get(product, {"v": product})
     hourly = interval == "h" or product == "hourly_height"
@@ -200,15 +205,17 @@ def fetch(
         log.info("%s %s %s..%s: %d rows", station, product, params["begin_date"], params["end_date"], len(rows))
         if rows:
             frames.append(pd.DataFrame(rows))
-    cols = ["time", *fields.values()]
+    cols = ["time", *fields.values(), *(["quality"] if quality else [])]
     if not frames:
-        return _empty(cols)
+        return _empty(cols, text=("quality",))
     raw = pd.concat(frames, ignore_index=True)
     df = pd.DataFrame({"time": pd.to_datetime(raw["t"], utc=True)})
     for key, name in fields.items():
         df[name] = pd.to_numeric(raw[key], errors="coerce").astype(float) if key in raw.columns else np.nan
         if (product, name) in CM_PER_S:
             df[name] = df[name] / 100.0
+    if quality:
+        df["quality"] = raw["q"].where(raw["q"].isin(["p", "v"]), None) if "q" in raw.columns else None
     return _in_range(df, start, end)
 
 
