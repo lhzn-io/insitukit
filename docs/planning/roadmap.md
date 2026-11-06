@@ -93,10 +93,18 @@ unit tests pass with the same assertions; only what the tests patch changes.
   and the URL.
 - Requests now send the User-Agent given to `insitukit.identify`, and start at least 0.2 s apart.
 
-## Later
+## 0.4.0: NDBC
 
-- NDBC: standard meteorological and ADCP records are in situ observations. Decide whether forcingkit's NDBC fetcher
-  moves here, with forcingkit re-exporting it.
+- `insitukit.ndbc` is ported from forcingkit's NDBC fetcher.
+  - It downloads each file once per call; the old fetcher fetched a yearly file again for every month of a window.
+  - It reads the column names of files from before 2007 (`WD`, `BAR`).
+  - It applies each column's own sentinel. The fetcher treated 99, 999 and 9999 as missing in every column, which
+    dropped real readings such as a 999.0 hPa low or a 99-degree wind.
+- forcingkit's `fetchers/ndbc.py` becomes a thin layer over it. Its live output is identical except for those
+  readings, now kept, and a source list without repeats.
+- `coops.current_predictions` accepts a window whose single event CO-OPS returns as an object, not a one-item list.
+
+## Later
 - `series` parity with lhzn-blue's own encoder, which keeps leading and trailing gaps, always uses an hourly grid,
   converts temperatures to degrees F and skips marker lists. Either `series` gains those options or the consumer
   keeps a thin wrapper.

@@ -279,7 +279,8 @@ def current_predictions(
         if vel_type:
             params["vel_type"] = vel_type
         body = _get(params) or {}
-        rows.extend((body.get("current_predictions") or {}).get("cp") or [])
+        cp = (body.get("current_predictions") or {}).get("cp") or []
+        rows.extend([cp] if isinstance(cp, dict) else cp)  # a window with one event comes back unwrapped
     cols = ["time", "velocity_major", *(["type"] if events else [])]
     if not rows:
         return _empty(cols, text=("type",))

@@ -271,3 +271,12 @@ def test_erddap_variables_get_and_a_missing_dataset(monkeypatch):
     monkeypatch.setattr(server._session, "get", lambda url, timeout=None: FakeResponse(404, text="Resource not found"))
     with pytest.raises(erddap.DatasetMissing):
         server.fetch("nope", *DAY, ["t"])
+
+
+def test_a_single_prediction_event_comes_back_unwrapped(monkeypatch):
+    one = {"Type": "flood", "meanFloodDir": 342, "Bin": "12", "meanEbbDir": 194, "Depth": "2.4",
+           "Time": "2026-11-01 06:15", "Velocity_Major": 55.3}
+    monkeypatch.setattr(coops, "_get", lambda params: {"current_predictions": {"cp": one}})
+    df = coops.current_predictions("PIR0701", datetime(2026, 11, 1, tzinfo=timezone.utc),
+                                   datetime(2026, 11, 1, 12, tzinfo=timezone.utc), interval="MAX_SLACK")
+    assert df["type"].tolist() == ["flood"] and df["velocity_major"].iloc[0] == pytest.approx(0.553)
