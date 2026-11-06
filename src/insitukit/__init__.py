@@ -1,7 +1,8 @@
 """Fetch, summarise and publish in situ ocean observations.
 
 - ``insitukit.coops``: NOAA CO-OPS (Tides and Currents) observations, tide predictions and station metadata.
-- ``insitukit.erddap``: a paced, budgeted ERDDAP tabledap client for any server.
+- ``insitukit.erddap``: a paced, budgeted, thread-safe ERDDAP tabledap client for any server, for batch jobs and
+  long-running services.
 - ``insitukit.stats``: daily means with a coverage rule, exceedance, joint histograms, marine heatwave climatology.
 - ``insitukit.series``: the compact JSON form of a regular time series, and back.
 - ``insitukit.store``: where the JSON goes (a directory, Cloudflare Workers KV or Google Cloud Storage), behind a
@@ -10,7 +11,7 @@
 Call ``identify`` once at start-up so every request names your application and a contact.
 """
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 
 def identify(user_agent: str, application: str | None = None) -> None:

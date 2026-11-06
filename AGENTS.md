@@ -5,9 +5,9 @@ Context for AI developer agents working in `lhzn-io/insitukit`. Human entry poin
 ## Architecture
 
 - `src/insitukit/`: `coops.py` (NOAA CO-OPS; an HTTP 200 with an error body or "No data was found" is an empty
-  result), `erddap.py` (ERDDAP tabledap with a per-instance budget and unreachable flag), `stats.py`, `series.py`
-  (the JSON series form), `store.py` (directory, Workers KV or GCS behind a name and size guard), and `identify` in
-  `__init__.py`.
+  result), `erddap.py` (ERDDAP tabledap with a per-instance budget, thread-safe pacing and an expiring failure
+  cache), `stats.py`, `series.py` (the JSON series form), `store.py` (directory, Workers KV or GCS behind a name and
+  size guard), and `identify` in `__init__.py`.
 - `tests/`: offline unit tests; HTTP calls are replaced.
 - Dependencies stay small: numpy, pandas, requests. Anything heavier is an optional extra (`gcs`).
 

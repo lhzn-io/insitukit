@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "insitukit"
-version = "0.2.0"
+version = "0.3.0"
 description = "Fetch, summarise and publish in situ ocean observations: NOAA CO-OPS and ERDDAP clients, record statistics, and a compact JSON time-series format."
 readme = "README.md"
 requires-python = ">=3.11"
